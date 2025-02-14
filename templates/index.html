@@ -1,0 +1,142 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Transaction Dashboard</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            background-color: #f4f4f4;
+            text-align: center;
+            margin: 20px;
+            transition: background 0.3s ease-in-out, color 0.3s ease-in-out;
+        }
+        .dark-mode {
+            background-color: #222;
+            color: white;
+        }
+        h1 {
+            color: #333;
+        }
+        .dark-mode h1 {
+            color: #fff;
+        }
+        .controls {
+            margin-bottom: 20px;
+        }
+        .controls input, .controls select, .controls button {
+            padding: 8px;
+            margin: 5px;
+        }
+        table {
+            width: 90%;
+            margin: 20px auto;
+            border-collapse: collapse;
+            background: white;
+            transition: background 0.3s;
+        }
+        .dark-mode table {
+            background: #333;
+        }
+        th, td {
+            padding: 10px;
+            border: 1px solid #ddd;
+        }
+        th {
+            background-color: #007bff;
+            color: white;
+        }
+        .dark-mode th {
+            background-color: #0056b3;
+        }
+    </style>
+</head>
+<body>
+    <h1>Transaction Dashboard</h1>
+
+    <div class="controls">
+        <input type="text" id="search" placeholder="Search Merchant..." onkeyup="filterTransactions()">
+        <select id="categoryFilter" onchange="filterTransactions()">
+            <option value="">All Categories</option>
+            <option value="Food">Food</option>
+            <option value="Bills">Bills</option>
+            <option value="Entertainment">Entertainment</option>
+            <option value="Shopping">Shopping</option>
+            <option value="Travel">Travel</option>
+            <option value="Other">Other</option>
+        </select>
+        <button onclick="toggleDarkMode()">Toggle Dark Mode</button>
+        <button onclick="fetchTransactions()">Refresh</button>
+    </div>
+
+    <table>
+        <thead>
+            <tr>
+                <th onclick="sortTable(0)">Date</th>
+                <th>Merchant</th>
+                <th>Category</th>
+                <th onclick="sortTable(3)">Amount</th>
+                <th>Type</th>
+            </tr>
+        </thead>
+        <tbody id="transactions"></tbody>
+    </table>
+
+    <script>
+        let transactionsData = [];
+
+        async function fetchTransactions() {
+            const response = await fetch('/get_transactions');
+            transactionsData = await response.json();
+            displayTransactions(transactionsData);
+        }
+
+        function displayTransactions(data) {
+            const tableBody = document.getElementById("transactions");
+            tableBody.innerHTML = "";
+
+            data.forEach(transaction => {
+                const row = document.createElement("tr");
+                row.innerHTML = `
+                    <td>${transaction.transaction_date}</td>
+                    <td>${transaction.merchant}</td>
+                    <td>${transaction.category}</td>
+                    <td>₹${transaction.amount.toFixed(2)}</td>
+                    <td>${transaction.transaction_type}</td>
+                `;
+                tableBody.appendChild(row);
+            });
+        }
+
+        function filterTransactions() {
+            const searchValue = document.getElementById("search").value.toLowerCase();
+            const categoryValue = document.getElementById("categoryFilter").value;
+
+            const filteredData = transactionsData.filter(transaction =>
+                (transaction.merchant.toLowerCase().includes(searchValue)) &&
+                (categoryValue === "" || transaction.category === categoryValue)
+            );
+
+            displayTransactions(filteredData);
+        }
+
+        function sortTable(columnIndex) {
+            transactionsData.sort((a, b) => {
+                if (columnIndex === 0) {
+                    return new Date(b.transaction_date) - new Date(a.transaction_date);
+                } else if (columnIndex === 3) {
+                    return b.amount - a.amount;
+                }
+            });
+            displayTransactions(transactionsData);
+        }
+
+        function toggleDarkMode() {
+            document.body.classList.toggle("dark-mode");
+        }
+
+        fetchTransactions();
+    </script>
+</body>
+</html>
