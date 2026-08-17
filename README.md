@@ -10,6 +10,36 @@
 
 ---
 
+## ⚡ Quick Test: Live Email Sync in 3 Steps
+
+Want to see FinTrack's live automated email processing in action? Follow these 3 quick steps:
+
+### 1️⃣ Send a Bank / UPI Alert Email
+Send an email to your configured Gmail inbox (**`kingyasuo72@gmail.com`**) from any email account with a transaction alert message.
+
+**Sample Email Content:**
+> **Subject:** `Alert: UPI Transaction Successful`
+> 
+> **Body:**
+> ```text
+> Dear UPI user, A/c *2263 debited by Rs. 850.00 on 18-Aug-2026 at Starbucks Coffee. UPI txn id 504912348821. Avl bal: INR 45,200.00.
+> ```
+> *(Or try a salary payslip, Swiggy food spend, Amazon order, or Uber ride alert!)*
+
+---
+
+### 2️⃣ Open the Website
+Visit your live deployed Vercel URL (or local dashboard at **`http://127.0.0.1:5000`**).
+
+---
+
+### 3️⃣ Hit "🔄 Refresh & Sync"
+Click the **`🔄 Refresh & Sync`** button on the top right.
+- FinTrack securely logs into Gmail over IMAP SSL, filters transaction alerts, and parses the merchant, amount, category, date, and UTR.
+- Your **AI Health Score**, **Expense Distribution Charts**, and **Transaction Ledger** will instantly animate and reflect the new transaction!
+
+---
+
 ## 📸 Dashboard Showcase
 
 - **Smart AI Cashflow Health Score**: Real-time evaluation of income retention and spending trajectory.
