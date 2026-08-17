@@ -19,6 +19,11 @@ class TestFlaskAPI(unittest.TestCase):
         self.assertIn(b"FinTrack", response.data)
         self.assertIn(b"Analytics", response.data)
 
+    def test_static_css_route(self):
+        response = self.client.get('/static/css/dashboard.css')
+        self.assertEqual(response.status_code, 200)
+        self.assertIn(b"FinTrack", response.data)
+
     def test_get_categories_route(self):
         response = self.client.get('/api/categories')
         self.assertEqual(response.status_code, 200)

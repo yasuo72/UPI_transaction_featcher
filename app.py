@@ -17,7 +17,16 @@ from core.email_fetcher import EmailTransactionFetcher
 # Load environment variables
 load_dotenv()
 
-app = Flask(__name__, static_folder='static', template_folder='templates')
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+STATIC_DIR = os.path.join(BASE_DIR, 'static')
+TEMPLATE_DIR = os.path.join(BASE_DIR, 'templates')
+
+app = Flask(
+    __name__,
+    static_folder=STATIC_DIR,
+    static_url_path='/static',
+    template_folder=TEMPLATE_DIR
+)
 app.config['SEND_FILE_MAX_AGE_DEFAULT'] = 0
 db = DatabaseManager('transactions.db')
 email_fetcher = EmailTransactionFetcher(db)
@@ -30,6 +39,13 @@ def add_cache_control(response):
     response.headers["Pragma"] = "no-cache"
     response.headers["Expires"] = "0"
     return response
+
+
+@app.route("/static/<path:filename>")
+def custom_static(filename):
+    """Explicit static file handler for serverless environments."""
+    from flask import send_from_directory
+    return send_from_directory(STATIC_DIR, filename)
 
 
 @app.route("/")
