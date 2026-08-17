@@ -1,0 +1,27 @@
+# Environment variables and secrets
+.env
+
+# Python Bytecode & Cache
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.pytest_cache/
+
+# IDE & Editor Configs
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Jupyter Checkpoints
+.ipynb_checkpoints/
+
+# Virtual Environments
+venv/
+env/
+ENV/
+
+# Output Plots & Temporary files
+*.png
+linear_regression_plot.png

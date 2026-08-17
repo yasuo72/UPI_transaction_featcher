@@ -1,176 +1,151 @@
-import sqlite3
-import re
-from datetime import datetime
-import imaplib
-import email
-from email.header import decode_header
-import os
-import logging
-from dotenv import load_dotenv  # Load environment variables
+"""
+UPI Transaction Processor CLI & Engine
+Processes SMS messages, fetches IMAP emails, and generates expense summaries.
+"""
 
-# Load environment variables from .env file
+import os
+import sys
+import logging
+from datetime import datetime
+from dotenv import load_dotenv
+
+# Ensure stdout handles UTF-8 on Windows
+if sys.platform == 'win32':
+    try:
+        sys.stdout.reconfigure(encoding='utf-8')
+    except AttributeError:
+        pass
+
+from core.parser import UPITransactionParser
+from core.db import DatabaseManager
+from core.email_fetcher import EmailTransactionFetcher
+
+# Load environment variables
 load_dotenv()
 
 # Configure logging
-logging.basicConfig(level=logging.INFO,
-                    format='%(asctime)s - %(levelname)s - %(message)s')
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(levelname)s - %(message)s'
+)
+logger = logging.getLogger("UPIProcessor")
 
 
 class UPITransactionProcessor:
-    def __init__(self) -> None:
-        """Initialize database connection and regex patterns"""
-        self.db_conn = sqlite3.connect('transactions.db', check_same_thread=False)
-        self.create_tables()
-        self.category_keywords = {
-            'Food': ['swiggy', 'zomato', 'dominos', 'pizza', 'restaurant'],
-            'Bills': ['electricity', 'water', 'gas', 'bill', 'recharge'],
-            'Entertainment': ['netflix', 'primevideo', 'bookmyshow', 'spotify'],
-            'Shopping': ['amazon', 'flipkart', 'myntra', 'ajio'],
-            'Travel': ['ola', 'uber', 'makemytrip', 'irctc'],
-            'Other': []
-        }
+    """High-level transaction processor orchestrating parsing, database, and email sync."""
 
-    def create_tables(self) -> None:
-        """Create required tables if they don’t exist"""
-        with self.db_conn:
-            self.db_conn.executescript('''
-                CREATE TABLE IF NOT EXISTS transactions (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    amount REAL NOT NULL,
-                    merchant TEXT,
-                    category TEXT,
-                    transaction_date DATETIME,
-                    transaction_type TEXT,
-                    source TEXT
-                );
-                CREATE TABLE IF NOT EXISTS expense_reports (
-                    category TEXT PRIMARY KEY,
-                    total_amount REAL NOT NULL,
-                    last_updated DATETIME
-                );
-            ''')
+    def __init__(self, db_path: str = 'transactions.db'):
+        self.db = DatabaseManager(db_path)
+        self.parser = UPITransactionParser()
+        self.email_fetcher = EmailTransactionFetcher(self.db)
 
-    def parse_transaction(self, message: str):
-        """Extract transaction details from message"""
-        try:
-            amount_match = re.search(r'INR\s?([\d,]+\.?\d{2})', message)
-            amount = float(amount_match.group(1).replace(",", "")) if amount_match else None
-
-            merchant_match = re.search(r'at PUR/([^/]+)/\d+', message)
-            merchant = merchant_match.group(1).strip() if merchant_match else 'Unknown'
-
-            date_match = re.search(r'on (\d{2}-\d{2}-\d{4} \d{2}:\d{2}:\d{2})', message)
-            transaction_date = datetime.strptime(date_match.group(1), "%d-%m-%Y %H:%M:%S") if date_match else datetime.now()
-
-            transaction_type = "Debit" if "debited" in message.lower() else "Credit" if "credited" in message.lower() else "Unknown"
-
-            return amount, merchant, transaction_date, transaction_type
-        except Exception as e:
-            logging.error(f"Parsing error: {e}")
-            return None, None, None, "Unknown"
+    def parse_transaction(self, message: str, source: str = 'SMS'):
+        """Extract transaction details from message."""
+        parsed = self.parser.parse_message(message, source=source)
+        return (
+            parsed['amount'],
+            parsed['merchant'],
+            parsed['transaction_date'],
+            parsed['transaction_type']
+        )
 
     def classify_category(self, merchant: str) -> str:
-        """Classify transaction based on merchant name"""
-        merchant_lower = merchant.lower()
-        return next((category for category, keywords in self.category_keywords.items() if any(keyword in merchant_lower for keyword in keywords)), 'Other')
+        """Classify category from merchant name."""
+        return self.parser.classify_category(merchant)
 
-    def save_transaction(self, amount: float, merchant: str, category: str, transaction_type: str, source: str, transaction_date: datetime) -> bool:
-        """Save transaction into the database"""
-        try:
-            with self.db_conn:
-                self.db_conn.execute('''
-                    INSERT INTO transactions (amount, merchant, category, transaction_date, transaction_type, source)
-                    VALUES (?, ?, ?, ?, ?, ?)''',
-                                     (amount, merchant, category, transaction_date, transaction_type, source))
+    def save_transaction(self, amount: float, merchant: str, category: str,
+                         transaction_type: str, source: str,
+                         transaction_date: datetime) -> bool:
+        """Save transaction to database safely with deduplication."""
+        saved, _ = self.db.save_transaction(
+            amount=amount,
+            merchant=merchant,
+            category=category,
+            transaction_type=transaction_type,
+            source=source,
+            transaction_date=transaction_date
+        )
+        return saved
 
-                if transaction_type == "Debit":
-                    self.db_conn.execute('''
-                        INSERT INTO expense_reports (category, total_amount, last_updated)
-                        VALUES (?, ?, ?)
-                        ON CONFLICT(category) DO UPDATE SET 
-                        total_amount = total_amount + excluded.total_amount,
-                        last_updated = excluded.last_updated
-                    ''', (category, amount, datetime.now()))
+    def process_sms(self, messages=None) -> int:
+        """Process SMS messages with deduplication (only if real messages provided)."""
+        if not messages:
+            return 0
 
-            logging.info(f"Saved transaction: {merchant} - ₹{amount} on {transaction_date} [{transaction_type}]")
-            return True
-        except sqlite3.Error as e:
-            logging.error(f"Database error: {e}")
-            return False
+        sms_list = [messages] if isinstance(messages, str) else messages
+        saved_count = 0
 
-    def process_sms(self) -> None:
-        """Process SMS messages (simulated for testing)"""
-        sample_sms = [
-            "INR 1400.00 has been debited from your A/c no. XX172263 on 08-02-2025 21:43:50 at PUR/M S GLOBAL "
-            "MART/100000000089018/503921456192.",
-            "INR 250.00 has been debited from your A/c no. XX172263 on 07-02-2025 19:30:20 at PUR/Netflix "
-            "Subscription/1029384756.",
-            "INR 5000.00 has been credited to your A/c no. XX172263 on 09-02-2025 10:15:30 from Amazon Seller Payments.",
-        ]
+        for sms in sms_list:
+            parsed = self.parser.parse_message(sms, source='SMS')
+            if parsed['amount']:
+                saved, msg_txt = self.db.save_transaction(
+                    amount=parsed['amount'],
+                    merchant=parsed['merchant'],
+                    category=parsed['category'],
+                    transaction_type=parsed['transaction_type'],
+                    source='SMS',
+                    transaction_date=parsed['transaction_date'],
+                    reference_id=parsed['reference_id'],
+                    account=parsed['account'],
+                    raw_hash=parsed['raw_hash']
+                )
+                if saved:
+                    saved_count += 1
+                    logger.info(f"Saved SMS: {parsed['merchant']} - INR {parsed['amount']} [{parsed['transaction_type']}]")
 
-        for sms in sample_sms:
-            amount, merchant, transaction_date, transaction_type = self.parse_transaction(sms)
-            if amount:
-                category = self.classify_category(merchant)
-                self.save_transaction(amount, merchant, category, transaction_type, 'SMS', transaction_date)
+        return saved_count
 
     def process_emails(self, email_user: str, email_pass: str) -> None:
-        """Fetch and process UPI transaction emails"""
-        try:
-            mail = imaplib.IMAP4_SSL('imap.gmail.com')
-            mail.login(email_user, email_pass)
-            mail.select('inbox')
+        """Fetch and process real UPI transaction emails from IMAP inbox."""
+        if not self.email_fetcher.is_valid_credential(email_user, email_pass):
+            logger.warning("Email credentials appear to be placeholder/unconfigured. Skipping IMAP fetch.")
+            return
 
-            status, messages = mail.search(None, '(SUBJECT "Transaction Alert" UNSEEN)')
-            if status != 'OK':
-                return
-
-            for num in messages[0].split():
-                status, data = mail.fetch(num, '(RFC822)')
-                if status != 'OK':
-                    continue
-
-                msg = email.message_from_bytes(data[0][1])
-                body = next((part.get_payload(decode=True).decode() for part in msg.walk() if part.get_content_type() == 'text/plain'), msg.get_payload(decode=True).decode())
-
-                amount, merchant, transaction_date, transaction_type = self.parse_transaction(body)
-                if amount:
-                    category = self.classify_category(merchant)
-                    self.save_transaction(amount, merchant, category, transaction_type, 'Email', transaction_date)
-
-                mail.store(num, '+FLAGS', '\\Seen')
-
-            mail.logout()
-        except Exception as e:
-            logging.error(f"Email processing error: {e}")
+        logger.info(f"Connecting to IMAP inbox for {email_user}...")
+        result = self.email_fetcher.sync_emails(email_user, email_pass, max_emails=100)
+        if result['success']:
+            logger.info(f"Email fetch finished: {result['saved']} new saved, {result['duplicates']} duplicates skipped.")
+        else:
+            logger.error(f"Email sync failed: {result.get('error')}")
 
     def generate_report(self) -> None:
-        """Generate expense report"""
-        try:
-            cur = self.db_conn.cursor()
-            cur.execute('''
-                SELECT category, ROUND(total_amount, 2), last_updated 
-                FROM expense_reports 
-                ORDER BY total_amount DESC''')
+        """Print clean expense summary report to terminal."""
+        stats = self.db.get_stats()
 
-            report = cur.fetchall()
-            print("\n=== Expense Report ===")
-            print("{:<15} {:<12} {}".format('Category', 'Amount', 'Last Updated'))
-            for row in report:
-                print("{:<15} ₹{:<10} {}".format(row[0], row[1], row[2]))
-        except sqlite3.Error as e:
-            logging.error(f"Report generation error: {e}")
+        print("\n" + "=" * 55)
+        print("           UPI EXPENSE & FINANCIAL SUMMARY           ")
+        print("=" * 55)
+        print(f" Total Spent (Debits) : INR {stats['total_debit']:>12,.2f}")
+        print(f" Total Income/Credits : INR {stats['total_credit']:>12,.2f}")
+        print(f" Net Cashflow         : INR {stats['net_balance']:>12,.2f}")
+        print(f" Total Transactions   : {stats['total_count']:>16}")
+        print(f" Top Expense Category : {stats['top_category']:>16}")
+        print("-" * 55)
+        print(f" {'Category':<25} {'Total Amount':<15} {'Count'}")
+        print("-" * 55)
+
+        for row in stats['category_breakdown']:
+            print(f" {row['category']:<25} INR {row['amount']:<11,.2f} {row['count']:>4}")
+
+        print("=" * 55 + "\n")
 
 
 if __name__ == "__main__":
     processor = UPITransactionProcessor()
-    processor.process_sms()
 
     email_user = os.getenv('EMAIL_USER')
     email_pass = os.getenv('EMAIL_PASS')
 
     if email_user and email_pass:
+        print("\n[+] Fetching live bank transactions from Gmail...")
         processor.process_emails(email_user, email_pass)
+    else:
+        print("\n[!] No email credentials in .env. Configure EMAIL_USER and EMAIL_PASS to fetch real emails.")
+
+    # Check for CLI SMS argument if user provided one
+    if len(sys.argv) > 1:
+        raw_sms = " ".join(sys.argv[1:])
+        print(f"\n[+] Parsing provided SMS text...")
+        processor.process_sms(raw_sms)
 
     processor.generate_report()
-    processor.db_conn.close()
